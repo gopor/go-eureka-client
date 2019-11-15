@@ -8,12 +8,12 @@ import (
 func main() {
     config := eureka.GetDefaultEurekaClientConfig()
     config.UseDnsForFetchingServiceUrls = false
-    config.Region = "region-cn-hd-1"
+    config.Region = eureka.DEFAULT_REGION
     config.AvailabilityZones = map[string]string{
-        "region-cn-hd-1": "zone-cn-hz-1",
+        eureka.DEFAULT_REGION: eureka.DEFAULT_ZONE,
     }
     config.ServiceUrl = map[string]string{
-        "zone-cn-hz-1": "http://192.168.20.236:9001/eureka,http://192.168.20.237:9001/eureka",
+        eureka.DEFAULT_ZONE: "http://cmd:cmd123@192.168.1.15:8761/eureka,http://cmd:cmd123@192.168.1.15:8762/eureka",
     }
 
     c := eureka.DefaultClient.Config(config)

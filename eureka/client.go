@@ -2,7 +2,6 @@ package eureka
 
 import (
     "errors"
-    "math/rand"
     "os"
     "os/signal"
     "strings"

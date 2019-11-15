@@ -9,6 +9,8 @@ import (
     "sync"
     "syscall"
     "time"
+
+    "go.uber.org/atomic"
 )
 
 const (
@@ -37,6 +39,9 @@ type Client struct {
     signalChan chan os.Signal
 
     mu sync.RWMutex
+
+    //// current user server node url
+    pickServerUrlIdx atomic.Int32
 }
 
 func (t *Client) Config(config *EurekaClientConfig) *Client {
@@ -101,6 +106,9 @@ func (t *Client) Run() {
     go t.refreshRegistry()
 
     t.registerWithEureka()
+
+    // send heartbeat
+    go t.heartbeat()
 }
 
 func (t *Client) refreshServiceUrls() error {
@@ -163,17 +171,38 @@ func (t *Client) pickServiceUrl() (string, bool) {
 
     t.mu.RLock()
     defer t.mu.RUnlock()
-
-    index := 0
-    if len(t.serviceUrls) > 1 {
-        index = rand.Intn(len(t.serviceUrls) - 1)
+    if len(t.serviceUrls) == 0 {
+        return "", false
     }
-    return t.serviceUrls[index], true
+
+    shiftIdx := int(t.pickServerUrlIdx.Inc())
+    return t.serviceUrls[shiftIdx%len(t.serviceUrls)], true
+}
+
+// pick current used server url
+func (t *Client) currentServerUrl() (string, bool) {
+    t.mu.RLock()
+    defer t.mu.RUnlock()
+
+    serverLength := len(t.serviceUrls)
+    if serverLength <= 0 {
+        return "", false
+    }
+
+    url := t.serviceUrls[int(t.pickServerUrlIdx.Load())%serverLength]
+
+    return url, true
 }
 
 // rand to pick service url and new EurekaServerApi instance
 func (t *Client) pickEurekaServerApi() (*EurekaServerApi, error) {
-    url, ok := t.pickServiceUrl()
+    // check using server url, firstly pick default url
+    url, ok := t.currentServerUrl()
+    if ok {
+        return NewEurekaServerApi(url), nil
+    }
+
+    url, ok = t.pickServiceUrl()
     if !ok {
         log.Errorf("No service url is available to pick.")
         return nil, errors.New("No service url is available to pick.")
@@ -221,32 +250,41 @@ func (t *Client) registerWithEureka() {
         // then break loop
         break;
     }
-
-    // send heartbeat
-    t.heartbeat()
 }
 
 // eureka client heartbeat
 func (t *Client) heartbeat() {
-    go func() {
-        for {
+    var latestPickIdx int32 = 0
+    ticker := time.NewTicker(time.Duration(t.config.HeartbeatIntervals) * time.Second)
+
+    for {
+        select {
+        case <-ticker.C:
             api, err := t.Api()
             if err != nil {
                 time.Sleep(time.Second * DEFAULT_SLEEP_INTERVALS)
                 continue
             }
 
+
+            if latestPickIdx != t.pickServerUrlIdx.Load() {
+                api.DeRegisterInstance(t.instance.App, t.instance.InstanceId)
+                t.registerWithEureka()
+                latestPickIdx = t.pickServerUrlIdx.Load()
+            }
+
             err = api.SendHeartbeat(t.instance.App, t.instance.InstanceId)
             if err != nil {
                 log.Errorf("Failed to send heartbeat, err=%s", err.Error())
                 time.Sleep(time.Second * DEFAULT_SLEEP_INTERVALS)
+
+                t.pickServerUrlIdx.Inc()
                 continue
             }
 
             log.Debugf("Heartbeat app=%s, instanceId=%s", t.instance.App, t.instance.InstanceId)
-            time.Sleep(time.Duration(t.config.HeartbeatIntervals) * time.Second)
         }
-    }()
+    }
 }
 
 func (t *Client) refreshRegistry() {

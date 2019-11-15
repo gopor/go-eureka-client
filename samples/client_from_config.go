@@ -1,7 +1,7 @@
 package main
 
 import (
-    "github.com/HikoQiu/go-eureka-client/eureka"
+    "github.com/gopor/go-eureka-client/eureka"
 )
 
 func main() {

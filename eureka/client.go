@@ -104,7 +104,7 @@ func (t *Client) Run() {
     // and update to t.registryApps
     go t.refreshRegistry()
 
-    t.registerWithEureka()
+    t.registerWithAllEureka()
 
     // send heartbeat
     go t.heartbeat()
@@ -150,8 +150,8 @@ func (t *Client) getServiceUrlsWithZones() error {
         }
 
         t.mu.Lock()
-        t.mu.Unlock()
         t.serviceUrls = urls
+        t.mu.Unlock()
         break
     }
 
@@ -210,6 +210,13 @@ func (t *Client) pickEurekaServerApi() (*EurekaServerApi, error) {
     return NewEurekaServerApi(url), nil
 }
 
+func (t *Client) registerWithAllEureka() {
+    for _ = range t.serviceUrls {
+        go t.registerWithEureka()
+        t.pickServerUrlIdx.Inc()
+    }
+}
+
 // register instance (default current status is STARTING)
 // and update instance status to UP
 func (t *Client) registerWithEureka() {
@@ -247,7 +254,7 @@ func (t *Client) registerWithEureka() {
 
         // if success to register to eureka and update status tu UP
         // then break loop
-        break;
+        break
     }
 }
 
@@ -265,19 +272,17 @@ func (t *Client) heartbeat() {
                 continue
             }
 
-
             if latestPickIdx != t.pickServerUrlIdx.Load() {
-                api.DeRegisterInstance(t.instance.App, t.instance.InstanceId)
                 t.registerWithEureka()
                 latestPickIdx = t.pickServerUrlIdx.Load()
             }
 
             err = api.SendHeartbeat(t.instance.App, t.instance.InstanceId)
             if err != nil {
+                t.pickServerUrlIdx.Inc()
+
                 log.Errorf("Failed to send heartbeat, err=%s", err.Error())
                 time.Sleep(time.Second * DEFAULT_SLEEP_INTERVALS)
-
-                t.pickServerUrlIdx.Inc()
                 continue
             }
 
@@ -340,23 +345,31 @@ func (t *Client) handleSignal() {
         case syscall.SIGKILL:
             fallthrough
         case syscall.SIGTERM:
-            log.Infof("Receive exit signal, client instance going to de-register, instanceId=%s.", t.instance.InstanceId)
-
-            // de-register instance
-            api, err := t.Api()
-            if err != nil {
-                log.Errorf("Failed to get EurekaServerApi instance, de-register %s failed, err=%s", t.instance.InstanceId, err.Error())
-                return
+            for _ = range t.serviceUrls {
+                t.deRegisterInstance()
+                t.pickServerUrlIdx.Inc()
             }
 
-            err = api.DeRegisterInstance(t.instance.App, t.instance.InstanceId)
-            if err != nil {
-                log.Errorf("Failed to de-register %s, err=%s", t.instance.InstanceId, err.Error())
-                return
-            }
-
-            log.Infof("de-register %s success.", t.instance.InstanceId)
             os.Exit(0)
         }
     }
+}
+
+func (t *Client) deRegisterInstance() {
+    log.Infof("Receive exit signal, client instance going to de-register, instanceId=%s.", t.instance.InstanceId)
+
+    // de-register instance
+    api, err := t.Api()
+    if err != nil {
+        log.Errorf("Failed to get EurekaServerApi instance, de-register %s failed, err=%s", t.instance.InstanceId, err.Error())
+        return
+    }
+
+    err = api.DeRegisterInstance(t.instance.App, t.instance.InstanceId)
+    if err != nil {
+        log.Errorf("Failed to de-register %s, err=%s", t.instance.InstanceId, err.Error())
+        return
+    }
+
+    log.Infof("de-register %s success.", t.instance.InstanceId)
 }

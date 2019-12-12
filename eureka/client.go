@@ -286,7 +286,7 @@ func (t *Client) heartbeat() {
                 continue
             }
 
-            log.Debugf("Heartbeat app=%s, instanceId=%s", t.instance.App, t.instance.InstanceId)
+            log.Debugf("Heartbeat url=%s, app=%s, instanceId=%s", api.BaseUrl, t.instance.App, t.instance.InstanceId)
         }
     }
 }
